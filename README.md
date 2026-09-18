@@ -3,3 +3,5 @@ Using Python with FLOWER framework and MLP with quality dataset to simulate Fede
 
 Required Library Install:
 python -m pip install torch torchvision
+
+See requirements.txt for required libraries
