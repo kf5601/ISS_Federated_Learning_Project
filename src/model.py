@@ -1,4 +1,5 @@
-# Author: Kai Fan kf5601
+# Author: Kai Fan kf5601 
+# Author: Tyriz Newton tn1207
 # Class: CSCI 532 Introduction to Intelligent Security Systems
 # Professor: Dr.Leon Reznik
 # File: src/model.py
@@ -37,7 +38,7 @@ class DigitCNN(nn.Module):
         return x
 
 
-# TODO: Accuracy is shit, but kept here for future reference, using CNN instead
+# TODO: Accuracy is not good, but kept here for future reference, using CNN instead... I thought MLP would be better
 # class DigitMLP(nn.Module):
 #     """Multilayer perceptron for handwritten digit classification."""
 

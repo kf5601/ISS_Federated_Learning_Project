@@ -1,5 +1,10 @@
-"""Dataset utilities for the FEMNIST federated learning dataset."""
+# Author: Kai Fan kf5601 
+# Author: Tyriz Newton tn1207
+# Class: CSCI 532 Introduction to Intelligent Security Systems
+# Professor: Dr.Leon Reznik
+# File: src/dataset.py
 
+# Required imports
 from pathlib import Path
 
 from PIL import Image
@@ -43,7 +48,7 @@ class FEMNISTClientDataset(Dataset):
         return image, label
 
 
-# DO NOT TOUCH THIS SHIT, DATA EXTRACTION AND STATISTICS ANALYSIS
+# DO NOT TOUCH THIS, UNLESS DIRECTORY CHANGES. DATA EXTRACTION AND STATISTICS ANALYSIS
 if __name__ == "__main__":
     root = "femnist_dataset"
 

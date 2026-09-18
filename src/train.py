@@ -1,5 +1,10 @@
-"""Centralized training for the FEMNIST MLP."""
+# Author: Kai Fan kf5601 
+# Author: Tyriz Newton tn1207
+# Class: CSCI 532 Introduction to Intelligent Security Systems
+# Professor: Dr.Leon Reznik
+# File: src/train.py
 
+# Required imports
 import torch
 from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, random_split
@@ -19,7 +24,7 @@ BATCH_SIZE = 32
 LEARNING_RATE = 0.001
 EPOCHS = 10
 
-
+# TODO: this needs to be changed in part 2 to implement federated learning
 def load_dataset():
     """Combine all client datasets for centralized model testing."""
 
@@ -30,9 +35,11 @@ def load_dataset():
 
     dataset = ConcatDataset(clients)
 
+    # Split the dataset into training and testing sets (80% train, 20% test)
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
 
+    # RNG
     generator = torch.Generator().manual_seed(42)
 
     train_dataset, test_dataset = random_split(
@@ -91,6 +98,7 @@ def evaluate(model, dataloader, device):
 
 
 def main():
+    # Nvidia GPU for my home computer, otherwise default to use CPU
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
     )
