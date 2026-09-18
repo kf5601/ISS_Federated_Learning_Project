@@ -1,1 +1,14 @@
-femnist_dataset
+# Professor's dataset
+femnist_dataset/
+
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
