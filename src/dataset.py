@@ -43,17 +43,26 @@ class FEMNISTClientDataset(Dataset):
         return image, label
 
 
+# DO NOT TOUCH THIS SHIT, DATA EXTRACTION AND STATISTICS ANALYSIS
 if __name__ == "__main__":
-    dataset = FEMNISTClientDataset(
-        root_dir="../femnist_dataset",
-        client_id=0
-    )
-    
-    print("Number of images:", len(dataset))
+    root = "femnist_dataset"
 
-    image, label = dataset[0]
+    total_images = 0
 
-    print("Image shape:", image.shape)
-    print("Label:", label)
-    print("Min pixel value:", image.min().item())
-    print("Max pixel value:", image.max().item())
+    for client_id in range(20):
+        dataset = FEMNISTClientDataset(root, client_id)
+
+        class_counts = [0] * 10
+
+        for _, label in dataset:
+            class_counts[label] += 1
+
+        total_images += len(dataset)
+
+        print(
+            f"Client {client_id:2d}: "
+            f"{len(dataset):4d} images | "
+            f"{class_counts}"
+        )
+
+    print(f"\nTotal images: {total_images}")
