@@ -13,7 +13,7 @@ from torchvision import transforms
 
 
 class FEMNISTClientDataset(Dataset):
-    """FEMNIST dataset belonging to a single federated client."""
+    """Load the FEMNIST samples belonging to one federated client."""
 
     def __init__(self, root_dir: str, client_id: int):
         self.client_dir = Path(root_dir) / f"client_{client_id}"
@@ -25,21 +25,27 @@ class FEMNISTClientDataset(Dataset):
 
         self.samples = []
 
+        # Each client contains directories 0-9. The directory name is
+        # the class label for every PNG stored inside that directory.
         for label in range(10):
             label_dir = self.client_dir / str(label)
 
             for image_path in sorted(label_dir.glob("*.png")):
                 self.samples.append((image_path, label))
 
+        # Ensure every image has one channel and convert pixel values
+        # from image values into PyTorch tensors in the range [0, 1].
         self.transform = transforms.Compose([
             transforms.Grayscale(num_output_channels=1),
             transforms.ToTensor(),
         ])
 
     def __len__(self):
+        """Return the number of samples belonging to this client."""
         return len(self.samples)
 
     def __getitem__(self, index):
+        """Load and return one (image, label) pair."""
         image_path, label = self.samples[index]
 
         image = Image.open(image_path)
@@ -48,7 +54,8 @@ class FEMNISTClientDataset(Dataset):
         return image, label
 
 
-# DO NOT TOUCH THIS, UNLESS DIRECTORY CHANGES. DATA EXTRACTION AND STATISTICS ANALYSIS
+# Dataset inspection utility used to verify the provided FEMNIST subset.
+# This is not part of model training.
 if __name__ == "__main__":
     root = "femnist_dataset"
 
