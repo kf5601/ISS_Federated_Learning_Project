@@ -8,12 +8,16 @@
 import torch
 from torch import nn
 
+
 class DigitCNN(nn.Module):
     """Convolutional neural network for handwritten digit classification."""
 
     def __init__(self, num_classes: int = 10):
         super().__init__()
 
+        # Extract spatial features from 1x28x28 grayscale images.
+        # Each pooling layer halves the image dimensions:
+        # 28x28 -> 14x14 -> 7x7.
         self.features = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -24,6 +28,7 @@ class DigitCNN(nn.Module):
             nn.MaxPool2d(kernel_size=2),
         )
 
+        # Convert the 64x7x7 feature maps into class scores for digits 0-9.
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(64 * 7 * 7, 128),
@@ -33,6 +38,7 @@ class DigitCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Perform a forward pass through the CNN."""
         x = self.features(x)
         x = self.classifier(x)
         return x
