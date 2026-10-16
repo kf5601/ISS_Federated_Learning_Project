@@ -6,16 +6,16 @@
 
 # Required imports
 from pathlib import Path
-
 from PIL import Image
-from torch.utils.data import Dataset
+import torch
+from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 
 
 class FEMNISTClientDataset(Dataset):
     """FEMNIST dataset belonging to a single federated client."""
 
-    def __init__(self, root_dir: str, client_id: int):
+    def __init__(self, root_dir: str, client_id: int, poison: bool = False, flip_rate: float = 1.0):
         self.client_dir = Path(root_dir) / f"client_{client_id}"
 
         if not self.client_dir.exists():
@@ -28,8 +28,14 @@ class FEMNISTClientDataset(Dataset):
         for label in range(10):
             label_dir = self.client_dir / str(label)
 
-            for image_path in sorted(label_dir.glob("*.png")):
-                self.samples.append((image_path, label))
+            if label_dir.exists():
+                for image_path in sorted(label_dir.glob("*.png")):
+                    # Apply static label flipping if client is poisoned
+                    if poison and torch.rand(1).item() < flip_rate:
+                        target_label = (label + 1) % 10
+                    else:
+                        target_label = label
+                    self.samples.append((image_path, target_label))
 
         self.transform = transforms.Compose([
             transforms.Grayscale(num_output_channels=1),
@@ -46,6 +52,24 @@ class FEMNISTClientDataset(Dataset):
         image = self.transform(image)
 
         return image, label
+
+
+def get_client_dataloaders(root_dir: str, client_id: int, batch_size: int = 32, poison: bool = False, flip_rate: float = 1.0, test_split: float = 0.2):
+    """Generates local train and evaluation dataloaders for a given client."""
+    dataset = FEMNISTClientDataset(root_dir, client_id, poison=poison, flip_rate=flip_rate)
+    if len(dataset) == 0:
+        return None, None
+
+    test_size = max(1, int(len(dataset) * test_split))
+    train_size = len(dataset) - test_size
+
+    generator = torch.Generator().manual_seed(42)
+    train_ds, test_ds = random_split(dataset, [train_size, test_size], generator=generator)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    return train_loader, test_loader
 
 
 # DO NOT TOUCH THIS, UNLESS DIRECTORY CHANGES. DATA EXTRACTION AND STATISTICS ANALYSIS
