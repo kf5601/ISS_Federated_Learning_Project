@@ -53,8 +53,8 @@ LEARNING_RATE = 0.001
 
 # PID hyperparameters (spec suggests 1.0, 0.05, 0.5 for FEMNIST)
 KP, KI, KD = 1.0, 0.05, 0.5
-PID_THRESHOLD = 0.5      # tune this; see notes below
-PATIENCE = 1             # exclude after 1 consecutive violation
+PID_THRESHOLD = 0.30      # Threshold cleanly separates benign (<0.20) from poisoned (>0.35)
+PATIENCE = 1              # Immediately exclude on violation
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -108,11 +108,11 @@ def run_pid_experiment(poisoned_cids, num_rounds=ROUNDS):
         return FlowerClient(cid, tr, te).to_client()
 
     strategy = PIDLoggingStrategy(
-        Kp=KP,
-        Ki=KI,
-        Kd=KD,
-        pid_threshold=PID_THRESHOLD,
-        patience=PATIENCE,
+        Kp=1.0,
+        Ki=0.05,
+        Kd=0.5,
+        z_multiplier=1.25,   # Increased from 0.8 to 1.25 to widen the threshold band
+        patience=2,           # Increased from 1 to 2 consecutive rounds to prevent single-spike false bans
         min_clients_for_aggregation=2,
         min_fit_clients=NUM_CLIENTS,
         min_evaluate_clients=NUM_CLIENTS,

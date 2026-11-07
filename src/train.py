@@ -95,7 +95,11 @@ class FlowerClient(fl.client.NumPyClient):
             loss.backward()
             optimizer.step()
 
-        return self.get_parameters(config={}), len(self.train_loader.dataset), {}
+        return (
+            self.get_parameters(config={}),
+            len(self.train_loader.dataset),
+            {"cid": int(self.cid)}
+        )
 
     def evaluate(self, parameters, config):
         """

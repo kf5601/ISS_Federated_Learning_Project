@@ -3,62 +3,27 @@
 # Class: CSCI 532 Introduction to Intelligent Security Systems
 # Professor: Dr.Leon Reznik
 # File: src/pid_strategy.py
-#
-# PID-based anomaly detection strategy for Federated Learning.
-#
-# Implements the adapted PID controller described in the project spec:
-#
-#   u(t) = Kp * D(t, mu) + Ki * sum_{i=1}^{t-1} D(i, mu) + Kd * (D(t, mu) - D(t-1, mu))
-#
-# Clients whose PID score exceeds the threshold are excluded from aggregation,
-# global model distribution, and further communication.
 
 import numpy as np
 import flwr as fl
-from flwr.common import (
-    Parameters,
-    ndarrays_to_parameters,
-    parameters_to_ndarrays,
-    FitRes,
-    ndarrays_to_parameters,
-)
+from flwr.common import Parameters, parameters_to_ndarrays, FitRes
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import FedAvg
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 
 def _flatten_params(parameters: Parameters) -> np.ndarray:
-    """Concatenate all layer arrays in a Parameters object into one flat vector."""
+    """Concatenate layer arrays in a Parameters object into one flat vector."""
     ndarrays = parameters_to_ndarrays(parameters)
     return np.concatenate([arr.ravel().astype(np.float64) for arr in ndarrays])
 
 
-def _normalized_l2(vec: np.ndarray, centroid: np.ndarray) -> float:
-    """
-    Normalized L2 distance between a client vector and the centroid.
-
-    Normalizing by ||centroid|| keeps distances on a comparable scale across
-    rounds (model weights can grow/shrink substantially as training proceeds).
-    """
-    denom = np.linalg.norm(centroid)
-    if denom < 1e-12:
-        return 0.0
-    return float(np.linalg.norm(vec - centroid) / denom)
-
-
 class PIDStrategy(FedAvg):
     """
-    FedAvg with PID-based client anomaly filtering.
-
-    Parameters
-    ----------
-    Kp, Ki, Kd : PID coefficients
-    pid_threshold : clients with PID score > threshold are excluded
-    patience : number of consecutive rounds a client must exceed threshold
-               before being permanently excluded (reduces false positives)
-    min_clients_for_aggregation : safety floor; never aggregate fewer than
-               this many clients (prevents total collapse if threshold is
-               mis-tuned)
+    FedAvg with Adaptive Core-Density PID Client Exclusion.
+    
+    Uses pairwise distance density to construct a robust consensus centroid
+    and dynamically threshold outliers via Z-score scaling.
     """
 
     def __init__(
@@ -66,8 +31,8 @@ class PIDStrategy(FedAvg):
         Kp: float = 1.0,
         Ki: float = 0.05,
         Kd: float = 0.5,
-        pid_threshold: float = 0.5,
-        patience: int = 1,
+        z_multiplier: float = 1.25,
+        patience: int = 2,
         min_clients_for_aggregation: int = 2,
         **kwargs,
     ):
@@ -75,56 +40,68 @@ class PIDStrategy(FedAvg):
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
-        self.pid_threshold = pid_threshold
+        self.z_multiplier = z_multiplier
         self.patience = patience
         self.min_clients_for_aggregation = min_clients_for_aggregation
 
-        # Per-client cumulative integral term: sum of past distances
         self._integral: Dict[str, float] = {}
-        # Per-client previous distance (for derivative term)
         self._prev_dist: Dict[str, float] = {}
-        # Per-client consecutive violation counter
         self._violation_count: Dict[str, int] = {}
-        # Clients permanently excluded
         self.excluded_clients: set = set()
-        # Logs: round -> {cid: pid_score}
         self.pid_log: Dict[int, Dict[str, float]] = {}
-        # Logs: round -> list of excluded cids *at that round*
         self.removal_log: Dict[int, List[str]] = {}
 
-    # ------------------------------------------------------------------
-    # PID computation
-    # ------------------------------------------------------------------
+    def _compute_core_centroid(self, vectors: List[np.ndarray]) -> np.ndarray:
+        """Finds the densest 50% cluster of client models to form a robust centroid."""
+        n = len(vectors)
+        if n <= 2:
+            return np.mean(vectors, axis=0)
+
+        dist_matrix = np.zeros((n, n))
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = np.linalg.norm(vectors[i] - vectors[j])
+                dist_matrix[i, j] = d
+                dist_matrix[j, i] = d
+
+        k = max(1, n // 2)
+        knn_scores = np.array([np.sum(np.sort(dist_matrix[i])[1 : k + 1]) for i in range(n)])
+        
+        # Select the densest 50% of active models
+        core_indices = np.argsort(knn_scores)[: max(1, n // 2)]
+        return np.mean([vectors[idx] for idx in core_indices], axis=0)
+
     def _compute_pid_scores(
         self, results: List[Tuple[ClientProxy, FitRes]]
-    ) -> Dict[str, float]:
-        """Compute PID score for each client in this round's results."""
+    ) -> Tuple[Dict[str, float], float]:
         if not results:
-            return {}
+            return {}, 0.0
 
-        # Build cid -> flattened weights mapping.
-        # NOTE: Flower's ClientProxy.cid is a stable identifier; we also
-        # read the integer cid from FitRes.metrics['cid'] because our client
-        # returns it explicitly (Ray-safe).
         cid_to_vec: Dict[str, np.ndarray] = {}
         for proxy, fit_res in results:
             cid_val = fit_res.metrics.get("cid", proxy.cid)
             cid = str(cid_val)
             cid_to_vec[cid] = _flatten_params(fit_res.parameters)
 
-        # Centroid = elementwise mean of all client vectors
-        stack = np.stack(list(cid_to_vec.values()), axis=0)
-        centroid = stack.mean(axis=0)
+        cids = list(cid_to_vec.keys())
+        vectors = [cid_to_vec[c] for c in cids]
 
+        # 1. Robust Centroid
+        centroid = self._compute_core_centroid(vectors)
+
+        # 2. Distance Normalization
+        raw_dists = {cid: float(np.linalg.norm(cid_to_vec[cid] - centroid)) for cid in cids}
+        median_dist = np.median(list(raw_dists.values())) + 1e-12
+        norm_dists = {cid: raw_dists[cid] / median_dist for cid in cids}
+
+        # 3. PID Score Evaluation
         pid_scores: Dict[str, float] = {}
-        for cid, vec in cid_to_vec.items():
-            dist = _normalized_l2(vec, centroid)
+        for cid in cids:
+            dist = norm_dists[cid]
 
-            # Round 1 (first observation for this client): only proportional term
             if cid not in self._integral:
                 self._integral[cid] = 0.0
                 self._prev_dist[cid] = dist
-                # First-round PID is just the proportional distance
                 pid_scores[cid] = self.Kp * dist
             else:
                 self._integral[cid] += dist
@@ -136,11 +113,12 @@ class PIDStrategy(FedAvg):
                     + self.Kd * derivative
                 )
 
-        return pid_scores
+        # 4. Dynamic Z-Score Threshold
+        scores_arr = np.array(list(pid_scores.values()))
+        dynamic_threshold = float(np.mean(scores_arr) + self.z_multiplier * np.std(scores_arr))
 
-    # ------------------------------------------------------------------
-    # Aggregate fit: filter clients then call FedAvg's weighting
-    # ------------------------------------------------------------------
+        return pid_scores, dynamic_threshold
+
     def aggregate_fit(
         self,
         server_round: int,
@@ -150,11 +128,9 @@ class PIDStrategy(FedAvg):
         if not results:
             return None, {}
 
-        # 1. Compute PID scores for this round
-        pid_scores = self._compute_pid_scores(results)
+        pid_scores, dynamic_threshold = self._compute_pid_scores(results)
         self.pid_log[server_round] = dict(pid_scores)
 
-        # 2. Determine which clients to exclude this round
         newly_excluded: List[str] = []
         kept_results: List[Tuple[ClientProxy, FitRes]] = []
 
@@ -162,63 +138,35 @@ class PIDStrategy(FedAvg):
             cid_val = fit_res.metrics.get("cid", proxy.cid)
             cid = str(cid_val)
 
-            # Already permanently excluded -> skip silently
             if cid in self.excluded_clients:
                 continue
 
             score = pid_scores.get(cid, 0.0)
-            if score > self.pid_threshold:
+            if score > dynamic_threshold:
                 self._violation_count[cid] = self._violation_count.get(cid, 0) + 1
                 if self._violation_count[cid] >= self.patience:
                     self.excluded_clients.add(cid)
                     newly_excluded.append(cid)
-                    continue  # do not include in aggregation
+                    continue
             else:
                 self._violation_count[cid] = 0
 
             kept_results.append((proxy, fit_res))
 
-        # 3. Safety floor: if too few clients remain, fall back to full set
         if len(kept_results) < self.min_clients_for_aggregation:
-            print(
-                f"[PID] Round {server_round}: too few clients "
-                f"({len(kept_results)}) after filtering; reverting to all clients."
-            )
-            kept_results = list(results)
+            kept_results = [r for r in results if str(r[1].metrics.get("cid", r[0].cid)) not in self.excluded_clients]
 
         self.removal_log[server_round] = newly_excluded
 
         print(
-            f"[PID] Round {server_round}: "
-            f"{len(kept_results)}/{len(results)} clients kept; "
-            f"newly excluded={newly_excluded}"
+            f"[PID] Round {server_round}: Dynamic Threshold = {dynamic_threshold:.4f} | "
+            f"{len(kept_results)}/{len(results)} clients kept | Excluded: {newly_excluded}"
         )
 
-        # 4. Delegate to standard FedAvg weighting/aggregation
         return super().aggregate_fit(server_round, kept_results, failures)
 
-    # ------------------------------------------------------------------
-    # Aggregate evaluate: honor exclusion so excluded clients are not
-    # evaluated (spec: discard from further communication)
-    # ------------------------------------------------------------------
-    def aggregate_evaluate(
-        self,
-        server_round: int,
-        results,
-        failures,
-    ):
+    def aggregate_evaluate(self, server_round: int, results, failures):
         if not results:
             return None, {}
-
-        kept = []
-        for proxy, eval_res in results:
-            cid_val = eval_res.metrics.get("cid", proxy.cid)
-            cid = str(cid_val)
-            if cid in self.excluded_clients:
-                continue
-            kept.append((proxy, eval_res))
-
-        if not kept:
-            kept = list(results)
-
-        return super().aggregate_evaluate(server_round, kept, failures)
+        kept = [r for r in results if str(r[1].metrics.get("cid", r[0].cid)) not in self.excluded_clients]
+        return super().aggregate_evaluate(server_round, kept if kept else list(results), failures)
